@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quizly — Nhập mã đề</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap');
+:root{--bg:#f7f8fc;--ink:#22243c;--muted:#8990a5;--line:#eaeaf3;--p:#7357ee;--ps:#f0ecff;--g:#159b75;--gs:#e9f8f1;--r:#e45b70;--rs:#fff0f2}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.7 "Be Vietnam Pro",sans-serif}
+main{max-width:720px;margin:0 auto;padding:32px 16px 60px}
+.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(43,35,88,.05);margin-bottom:16px}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:-.8px}
+h1 span{color:var(--p)}
+.muted{color:var(--muted);font-size:12px}
+.eyebrow{font-size:11px;font-weight:700;color:var(--p);letter-spacing:1.6px;text-transform:uppercase}
+input{font:inherit}
+#code{width:100%;font-size:34px;font-weight:800;letter-spacing:14px;text-align:center;padding:12px;border:1.5px solid var(--line);border-radius:14px;margin:16px 0 12px;color:var(--p)}
+#code:focus{outline:3px solid #d9cffb;border-color:var(--p)}
+.btn{display:block;width:100%;padding:13px;border:0;border-radius:12px;background:var(--p);color:#fff;font:700 14px "Be Vietnam Pro",sans-serif;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.soft{background:var(--ps);color:var(--p);margin-top:10px}
+#msg{min-height:22px;margin-top:10px;font-size:12px;text-align:center;color:var(--r)}
+.q{white-space:pre-wrap;font-weight:700;font-size:16px;margin:6px 0 12px;overflow-wrap:anywhere}
+label.o{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;margin-bottom:8px;border:1.5px solid var(--line);border-radius:13px;cursor:pointer;white-space:pre-wrap;overflow-wrap:anywhere}
+label.o:hover{border-color:#c9bdf9}
+label.o input{margin-top:5px;accent-color:var(--p)}
+label.o b{color:var(--muted)}
+label.o.right{background:var(--gs);border-color:#94d6bf}
+label.o.wrong{background:var(--rs);border-color:#f3aaba}
+.top{display:flex;justify-content:space-between;align-items:center;gap:10px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5}
+#timer{font-weight:700;color:var(--p);background:var(--ps);padding:6px 12px;border-radius:10px;font-variant-numeric:tabular-nums}
+.score{font-size:48px;font-weight:800;color:var(--p);text-align:center;line-height:1.2}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<main>
+
+<section id="s1">
+  <div class="card">
+    <div class="eyebrow">Quizly</div>
+    <h1>Nhập mã đề<span>.</span></h1>
+    <p class="muted" style="margin:0">Nhập mã gồm 4 chữ số do người tạo đề cung cấp.</p>
+    <input id="code" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off" aria-label="Mã đề 4 số">
+    <button class="btn" id="go" disabled>Tìm đề &amp; bắt đầu</button>
+    <div id="msg" role="status" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="s2" class="hide">
+  <div class="top">
+    <div><div class="eyebrow" id="title"></div><div class="muted" id="prog"></div></div>
+    <div id="timer" class="hide">00:00</div>
+  </div>
+  <div id="qs"></div>
+  <button class="btn" id="submit">Nộp bài</button>
+</section>
+
+<section id="s3" class="hide">
+  <div class="card">
+    <div class="eyebrow" style="text-align:center">Kết quả</div>
+    <div class="score" id="score"></div>
+    <p class="muted" id="detail" style="text-align:center;margin:0"></p>
+    <button class="btn" id="again" style="margin-top:18px">Làm lại</button>
+    <button class="btn soft" id="home">Nhập mã khác</button>
+  </div>
+  <div id="rev"></div>
+</section>
+
+</main>
+
+<script>
+// Dùng REST API của Realtime Database, không cần tải thư viện Firebase
+const DB = "https://code-9b836-default-rtdb.asia-southeast1.firebasedatabase.app";
+const $ = s => document.querySelector(s);
+let quiz = null, picks = [], tick = null, done = false;
+
+const show = id => ["s1","s2","s3"].forEach(n => $("#"+n).classList.toggle("hide", n !== id));
+const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+$("#code").oninput = e => {
+  e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  $("#go").disabled = e.target.value.length !== 4;
+  $("#msg").textContent = "";
+};
+$("#code").onkeydown = e => { if (e.key === "Enter" && !$("#go").disabled) $("#go").click(); };
+
+$("#go").onclick = async () => {
+  const code = $("#code").value, msg = $("#msg");
+  $("#go").disabled = true;
+  msg.style.color = "var(--muted)";
+  msg.textContent = "Đang tìm đề…";
+  try {
+    const res = await fetch(`${DB}/quizzes/${code}.json`);
+    if (!res.ok) throw new Error(res.status === 401 || res.status === 403
+      ? "Không có quyền đọc dữ liệu. Hãy kiểm tra Security Rules của Firebase."
+      : "Lỗi kết nối, vui lòng thử lại.");
+    const data = await res.json();
+    if (!data || !Array.isArray(data.questions) || !data.questions.length) {
+      throw new Error("Không tìm thấy đề có mã " + code + ".");
+    }
+    quiz = data;
+    start();
+  } catch (err) {
+    msg.style.color = "var(--r)";
+    msg.textContent = err.message;
+  }
+  $("#go").disabled = $("#code").value.length !== 4;
+};
+
+function start() {
+  clearInterval(tick);
+  done = false;
+  picks = quiz.questions.map(() => -1);
+  $("#title").textContent = quiz.title || "Đề " + $("#code").value;
+  const qs = $("#qs");
+  qs.replaceChildren();
+  quiz.questions.forEach((q, i) => {
+    const card = mk("div", "card");
+    card.append(mk("div", "eyebrow", `Câu ${i + 1}`), mk("div", "q", q.q));
+    q.o.forEach((t, k) => {
+      const lb = mk("label", "o");
+      const r = document.createElement("input");
+      r.type = "radio"; r.name = "q" + i;
+      r.onclick = () => { // bấm lại để bỏ chọn
+        if (picks[i] === k) { r.checked = false; picks[i] = -1; } else picks[i] = k;
+        count();
+      };
+      const b = mk("b", "", String.fromCharCode(65 + k) + ".");
+      lb.append(r, b, document.createTextNode(" " + t));
+      card.appendChild(lb);
+    });
+    qs.appendChild(card);
+  });
+  count();
+  const mins = Number(quiz.minutes) || 0;
+  $("#timer").classList.toggle("hide", !mins);
+  if (mins) {
+    const end = Date.now() + mins * 60000;
+    const upd = () => {
+      const s = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+      $("#timer").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+      if (!s) finish();
+    };
+    upd(); tick = setInterval(upd, 500);
+  }
+  show("s2");
+  window.scrollTo(0, 0);
+}
+
+const count = () => $("#prog").textContent = `Đã làm ${picks.filter(p => p >= 0).length} / ${picks.length} câu`;
+
+function finish() {
+  if (done) return;
+  const blank = picks.filter(p => p < 0).length;
+  if (blank && tick && !confirm(`Còn ${blank} câu chưa làm. Nộp bài?`)) return;
+  done = true;
+  clearInterval(tick);
+  const graded = quiz.questions.filter(q => q.a >= 0).length;
+  let right = 0;
+  quiz.questions.forEach((q, i) => { if (q.a >= 0 && picks[i] === q.a) right++; });
+  $("#score").textContent = graded ? (right / graded * 10).toLocaleString("vi-VN", { maximumFractionDigits: 2 }) + " / 10" : "—";
+  $("#detail").textContent = graded
+    ? `Đúng ${right} / ${graded} câu được chấm` + (graded < picks.length ? ` · ${picks.length - graded} câu không có đáp án` : "")
+    : "Đề này chưa có đáp án nên không chấm điểm.";
+  const rev = $("#rev");
+  rev.replaceChildren();
+  quiz.questions.forEach((q, i) => {
+    const card = mk("div", "card");
+    card.append(mk("div", "eyebrow", `Câu ${i + 1}`), mk("div", "q", q.q));
+    q.o.forEach((t, k) => {
+      const cls = k === q.a ? "right" : (k === picks[i] && q.a >= 0 ? "wrong" : "");
+      card.appendChild(mk("div", "o " + cls, String.fromCharCode(65 + k) + ". " + t + (k === picks[i] ? "  ← bạn chọn" : "")));
+    });
+    rev.appendChild(card);
+  });
+  show("s3");
+  window.scrollTo(0, 0);
+}
+
+$("#submit").onclick = finish;
+$("#again").onclick = start;
+$("#home").onclick = () => { clearInterval(tick); show("s1"); $("#code").value = ""; $("#go").disabled = true; };
+</script>
+</body>
+</html>
